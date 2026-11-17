@@ -155,8 +155,10 @@ export function LoginGateway({ onSuccessLogin }: LoginGatewayProps) {
       toast.success("تم اعتماد كلمة المرور وتسجيل الدخول كمدير عام بنجاح!");
       await onSuccessLogin(res.customUser, undefined, res.userProfile);
     } catch (err: any) {
-      console.warn("Instant admin password notice:", err);
-      toast.error(err.message || "تعذر تحديث كلمة المرور");
+      console.warn("Instant admin password notice:", err?.message);
+      const msg = err?.message || "تعذر تحديث كلمة المرور";
+      setAuthErrorMessage(msg);
+      toast.error(msg);
     } finally {
       setIsSigningInEmail(false);
     }

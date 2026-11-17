@@ -20,8 +20,11 @@ import {
   Clock,
   CheckCircle,
   KeyRound,
+  Lock,
 } from "lucide-react";
 import { toast } from "sonner";
+import { onAuthStateChanged, type User as FirebaseUser } from "firebase/auth";
+import { auth, signInWithGoogle, logOut } from "@/lib/firebase";
 import {
   getAllUsers,
   getAllInvitations,
@@ -30,8 +33,7 @@ import {
   toggleUserSuspension,
   deleteUserAccount,
   resetUserPassword,
-  type UserProfile,
-  type Invitation,
+  syncUserProfile,
   type UserRole,
   type AccountStatus,
   ROLE_PERMISSIONS,
@@ -76,11 +78,60 @@ export function UserPermissionsModal({
   // Delete confirmation state
   const [deletingAccount, setDeletingAccount] = useState<MergedAccount | null>(null);
 
+  // Firebase Cloud Auth session tracking
+  const [cloudUser, setCloudUser] = useState<FirebaseUser | null>(() => auth.currentUser);
+  const [isLinkingGoogle, setIsLinkingGoogle] = useState(false);
+
   useEffect(() => {
-    if (isOpen) {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setCloudUser(u);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (isOpen && cloudUser) {
       loadAccounts();
+    } else if (isOpen && !cloudUser) {
+      setAccounts([]);
+      setIsLoading(false);
     }
-  }, [isOpen]);
+  }, [isOpen, cloudUser]);
+
+  const formatModalError = (err: unknown, fallback: string) => {
+    const raw = err instanceof Error ? err.message : String(err || '');
+    if (raw.includes('CLOUD_AUTH_REQUIRED:')) {
+      return raw.split('CLOUD_AUTH_REQUIRED:')[1].trim();
+    }
+    if (raw.startsWith('{') && raw.includes('operationType')) {
+      return 'لا تملك الجلسة الحالية صلاحية كافية في قاعدة البيانات. يرجى إعادة توثيق الدخول بحساب Google للمدير.';
+    }
+    return raw || fallback;
+  };
+
+  const handleLinkGoogleAdmin = async () => {
+    setIsLinkingGoogle(true);
+    try {
+      const cred = await signInWithGoogle();
+      if (cred?.user) {
+        const profile = await syncUserProfile(cred.user);
+        if (profile.role !== 'admin') {
+          await logOut();
+          toast.error('هذا الحساب ليس لديه صلاحية مدير نظام.');
+          return;
+        }
+        setCloudUser(cred.user);
+        toast.success('تم توثيق جلسة المدير السحابية بنجاح!');
+        await loadAccounts();
+      }
+    } catch (err: any) {
+      if (err?.code !== 'auth/popup-closed-by-user') {
+        toast.error(formatModalError(err, 'تعذر التوثيق بحساب Google'));
+      }
+    } finally {
+      setIsLinkingGoogle(false);
+    }
+  };
 
   const loadAccounts = async () => {
     setIsLoading(true);
@@ -134,14 +185,17 @@ export function UserPermissionsModal({
 
       setAccounts(Array.from(map.values()));
     } catch (err: any) {
-      console.error(err);
-      toast.error("فشل في تحميل الحسابات: " + (err.message || "خطأ في الصلاحيات"));
+      console.warn("Load accounts notice:", err?.message || err);
+      toast.error("فشل في تحميل الحسابات: " + formatModalError(err, "خطأ في الصلاحيات"));
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleRoleChange = async (account: MergedAccount, newRole: UserRole) => {
+    if (!auth.currentUser) {
+      return toast.error("يرجى توثيق الجلسة بحساب Google للمدير أولاً.");
+    }
     if (account.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase() && newRole !== "admin") {
       return toast.error("لا يمكن تخفيض صلاحيات المدير الأساسي للنظام");
     }
@@ -154,14 +208,17 @@ export function UserPermissionsModal({
       );
       toast.success(`تم تغيير صلاحية ${account.email} إلى "${ROLE_PERMISSIONS[newRole].label}"`);
     } catch (err: any) {
-      console.error(err);
-      toast.error("فشل في تحديث الصلاحية: " + (err.message || "خطأ غير متوقع"));
+      console.warn("Update role notice:", err?.message || err);
+      toast.error("فشل في تحديث الصلاحية: " + formatModalError(err, "خطأ غير متوقع"));
     } finally {
       setBusyEmail(null);
     }
   };
 
   const handleToggleSuspension = async (account: MergedAccount) => {
+    if (!auth.currentUser) {
+      return toast.error("يرجى توثيق الجلسة بحساب Google للمدير أولاً.");
+    }
     if (account.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
       return toast.error("لا يمكن تعليق حساب المدير الأساسي للنظام");
     }
@@ -183,21 +240,24 @@ export function UserPermissionsModal({
           : `تم إعادة تفعيل صلاحية دخول ${account.email} بنجاح`
       );
     } catch (err: any) {
-      console.error(err);
-      toast.error("فشل في تعديل حالة الحساب: " + (err.message || ""));
+      console.warn("Toggle suspension notice:", err?.message || err);
+      toast.error("فشل في تعديل حالة الحساب: " + formatModalError(err, ""));
     } finally {
       setBusyEmail(null);
     }
   };
 
   const handleResetPassword = async (account: MergedAccount) => {
+    if (!auth.currentUser) {
+      return toast.error("يرجى توثيق الجلسة بحساب Google للمدير أولاً.");
+    }
     if (account.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
       return toast.error("لا يمكن إعادة تعيين كلمة مرور المدير الأساسي من هنا");
     }
 
     setBusyEmail(account.email);
     try {
-      await resetUserPassword(account.email);
+      await resetUserPassword(account.email, account.displayName, account.role);
       setAccounts((prev) =>
         prev.map((a) => (a.email === account.email ? { ...a, status: "pending" } : a))
       );
@@ -205,8 +265,8 @@ export function UserPermissionsModal({
         `تمت إعادة تعيين كلمة مرور ${account.email} بنجاح. يستطيع المهندس الآن كتابة كلمة مرور جديدة في تبويب التفعيل.`
       );
     } catch (err: any) {
-      console.warn("Reset password notice:", err);
-      toast.error("فشل في إعادة تعيين كلمة المرور: " + (err.message || ""));
+      console.warn("Reset password notice:", err?.message || err);
+      toast.error("فشل في إعادة تعيين كلمة المرور: " + formatModalError(err, ""));
     } finally {
       setBusyEmail(null);
     }
@@ -214,6 +274,9 @@ export function UserPermissionsModal({
 
   const handleConfirmDelete = async () => {
     if (!deletingAccount) return;
+    if (!auth.currentUser) {
+      return toast.error("يرجى توثيق الجلسة بحساب Google للمدير أولاً.");
+    }
     if (deletingAccount.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
       return toast.error("لا يمكن حذف حساب المدير الأساسي للنظام");
     }
@@ -225,8 +288,8 @@ export function UserPermissionsModal({
       toast.success(`تم حذف حساب ${deletingAccount.email} وسحب صلاحياته نهائياً`);
       setDeletingAccount(null);
     } catch (err: any) {
-      console.warn("Delete account notice:", err);
-      toast.error("فشل في حذف الحساب: " + (err.message || ""));
+      console.warn("Delete account notice:", err?.message || err);
+      toast.error("فشل في حذف الحساب: " + formatModalError(err, ""));
     } finally {
       setBusyEmail(null);
     }
@@ -234,6 +297,9 @@ export function UserPermissionsModal({
 
   const handleAddPreauthorizedUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!auth.currentUser) {
+      return toast.error("يرجى توثيق الجلسة بحساب Google للمدير أولاً قبل إضافة مهندسين.");
+    }
     const email = newEmail.trim().toLowerCase();
     if (!email || !email.includes("@")) {
       return toast.error("يرجى إدخال بريد إلكتروني صحيح");
@@ -260,8 +326,8 @@ export function UserPermissionsModal({
         `تم اعتماد المهندس (${email}) بصلاحية (${ROLE_PERMISSIONS[newRole].label})! يستطيع الآن الدخول وتعيين كلمة مروره.`
       );
     } catch (err: any) {
-      console.error(err);
-      toast.error("فشل إضافة المهندس: " + (err.message || "خطأ في الصلاحيات"));
+      console.warn("Add user notice:", err?.message || err);
+      toast.error("فشل إضافة المهندس: " + formatModalError(err, "خطأ في الصلاحيات"));
     } finally {
       setIsAdding(false);
     }
@@ -345,6 +411,37 @@ export function UserPermissionsModal({
           </div>
         </div>
 
+        {/* Cloud Admin Auth Verification Banner when logged in via local password only */}
+        {!cloudUser && (
+          <div className="p-4 mb-4 rounded-xl border-2 border-amber-300 bg-amber-50/90 dark:bg-amber-950/30 dark:border-amber-800 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5 flex-1 min-w-[240px]">
+              <Lock className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <div className="text-xs font-bold text-amber-950 dark:text-amber-200">
+                  توثيق جلسة المدير السحابية مطلوب لإدارة المهندسين
+                </div>
+                <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                  أنت مسجل الدخول حالياً بكلمة المرور (جلسة محلية). لعرض قائمة المهندسين أو إضافة/تعديل الصلاحيات في قاعدة البيانات السحابية، يرجى توثيق الجلسة بحساب Google للمدير ({BOOTSTRAP_ADMIN_EMAIL}).
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              disabled={isLinkingGoogle}
+              onClick={handleLinkGoogleAdmin}
+              className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs gap-1.5 cursor-pointer shrink-0"
+            >
+              {isLinkingGoogle ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <ShieldCheck className="w-4 h-4" />
+              )}
+              <span>تفعيل الإدارة بحساب Google</span>
+            </Button>
+          </div>
+        )}
+
         {/* Action Controls: Search + Add Engineer + Refresh */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="relative flex-1 min-w-[220px]">
@@ -361,8 +458,9 @@ export function UserPermissionsModal({
             <Button
               variant="default"
               size="sm"
+              disabled={!cloudUser}
               onClick={() => setShowAddForm((v) => !v)}
-              className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+              className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer disabled:opacity-50"
             >
               <UserPlus className="w-4 h-4" />
               {showAddForm ? "إغلاق النموذج" : "إضافة واعتماد مهندس جديد"}
@@ -370,8 +468,8 @@ export function UserPermissionsModal({
             <Button
               variant="outline"
               size="sm"
-              onClick={loadAccounts}
-              disabled={isLoading}
+              onClick={() => (cloudUser ? loadAccounts() : handleLinkGoogleAdmin())}
+              disabled={isLoading || isLinkingGoogle}
               className="gap-1.5 text-xs"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />

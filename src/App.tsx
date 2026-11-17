@@ -75,6 +75,7 @@ import {
   fetchCloudProjects,
   deleteCloudProject,
   checkEmailAuthorization,
+  hasCloudAuthSession,
   type UserProfile,
   type UserRole,
   ROLE_PERMISSIONS,
@@ -286,7 +287,7 @@ export default function App() {
             localStorage.setItem("gea_custom_session", JSON.stringify({ user, profile }));
             await loadCloudProjects(profile, false);
           } catch (err: any) {
-            console.error("Profile sync error on startup", err);
+            console.warn("Profile sync notice on startup:", err?.message || err);
             await logout();
             localStorage.removeItem("gea_custom_session");
             setAuthUser(null);
@@ -1982,6 +1983,10 @@ export default function App() {
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                   onClick={() => {
+                    if (!hasCloudAuthSession()) {
+                      toast.info("لعرض كافة مقايسات الفريق من السحابة، يرجى توثيق الجلسة بحساب Google أولاً عبر زر (إدارة الصلاحيات) أو إعادة الدخول بحساب Google.");
+                      return;
+                    }
                     setViewAllTeam(true);
                     if (userProfile) loadCloudProjects(userProfile, true);
                   }}
