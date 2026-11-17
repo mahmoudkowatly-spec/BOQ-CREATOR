@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role-based access control details",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user ID matching Auth UID or credential UID" },
+        "email": { "type": "string", "description": "The user email" },
+        "displayName": { "type": "string", "description": "The user display name" },
+        "role": { "type": "string", "description": "Role in the BOQ system", "enum": ["admin", "estimator", "viewer"] },
+        "status": { "type": "string", "description": "Account status", "enum": ["active", "pending", "suspended"] },
+        "createdAt": { "type": "string", "description": "ISO timestamp of creation" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of update" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Invitation": {
+      "title": "Invitation",
+      "description": "Pre-authorized user invitation and password verification record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Normalized email key or invitation ID" },
+        "email": { "type": "string", "description": "Authorized corporate email address" },
+        "displayName": { "type": "string", "description": "Engineer name" },
+        "role": { "type": "string", "description": "Pre-assigned role", "enum": ["admin", "estimator", "viewer"] },
+        "status": { "type": "string", "description": "Invitation status", "enum": ["pending", "active", "suspended"] },
+        "passwordHash": { "type": "string", "description": "Secure SHA-256 password hash" },
+        "salt": { "type": "string", "description": "Cryptographic salt for password hashing" },
+        "invitedBy": { "type": "string", "description": "Admin email who created the invitation" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of invitation" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last update" }
+      },
+      "required": ["id", "email", "role", "status"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Marker document indicating admin privileges for a user",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user ID matching Auth UID" },
+        "email": { "type": "string", "description": "The admin email" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of assignment" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Saved BOQ Project estimate with items and calculation data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique project identifier" },
+        "ownerId": { "type": "string", "description": "User ID of the project creator" },
+        "ownerEmail": { "type": "string", "description": "Email of the project creator" },
+        "projectName": { "type": "string", "description": "Name of the project" },
+        "clientName": { "type": "string", "description": "Client or contractor name" },
+        "orgName": { "type": "string", "description": "Organization or entity name" },
+        "governorate": { "type": "string", "description": "Governorate or location" },
+        "refNumber": { "type": "string", "description": "Official reference number" },
+        "logoDataUrl": { "type": "string", "description": "Base64 logo data URL" },
+        "discountPercent": { "type": "number", "description": "Discount percentage applied" },
+        "estimate": { "type": "object", "description": "Complete estimate JSON object with sections and custom items" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of creation" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last update" }
+      },
+      "required": ["id", "ownerId", "projectName"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles and role assignments"
+    },
+    "/invitations/{invitationId}": {
+      "schema": { "$ref": "#/entities/Invitation" },
+      "description": "Pre-authorized user invitations and credential verification records"
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Admin identity documents for secure exists() lookup"
+    },
+    "/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "BOQ project records saved to cloud database"
+    }
+  }
+}
