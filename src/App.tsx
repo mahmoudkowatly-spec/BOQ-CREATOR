@@ -431,7 +431,7 @@ export default function App() {
 
   useEffect(() => {
     setMounted(true);
-    fetch("/data/items.json")
+    fetch(`${import.meta.env.BASE_URL}data/items.json`)
       .then((r) => r.json())
       .then((d: Item[]) => {
         const cleaned = d.map((it) => ({
